@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Симулятор освещённости реального фонаря vs точечный источник</title>
+<style>
+    html, body { margin:0; padding:0; overflow:hidden; background:#0e0f12; font:13px/1.45 monospace; }
+    #c { display:block; width:100vw; height:100vh; }
+    .panel { position:fixed; background:rgba(16,18,22,0.88); border:1px solid #3a3d44; color:#c8c8c8; padding:10px 12px; }
+    #ui { top:12px; left:12px; width:270px; }
+    #hud { bottom:12px; left:12px; }
+    #hint { bottom:12px; right:12px; color:#8a8d94; text-align:right; }
+    #overlay { position:fixed; inset:0; background:rgba(10,11,14,0.82); color:#e8e8e8;
+               display:flex; align-items:center; justify-content:center; text-align:center;
+               pointer-events:none; z-index:5; }
+    #overlay .card { max-width:560px; font-size:14px; line-height:1.7;
+                     pointer-events:auto; cursor:pointer; }
+    #ui { z-index:10; }
+    h1 { font-size:15px; margin:0 0 8px; color:#e8e8e8; }
+    .row { margin:6px 0; }
+    .row label { color:#9ab0c0; display:block; font-size:11px; }
+    .row .val { color:#e8e8e8; }
+    .row.g-phys input[type=range] { accent-color:#5f8fbf; }
+    .row.g-phys label { color:#5f8fbf; }
+    .row.g-asym input[type=range] { accent-color:#5fd06a; }
+    .row.g-asym label { color:#5fd06a; }
+    .row.g-spline input[type=range] { accent-color:#e0a355; }
+    .row.g-spline label { color:#e0a355; }
+    .row.g-dasym input[type=range] { accent-color:#b08fd0; }
+    .row.g-dasym label { color:#b08fd0; }
+    .row.g-aces input[type=range] { accent-color:#d0b070; }
+    .row.g-aces label { color:#d0b070; }
+    .row.g-misc input[type=range] { accent-color:#8a8f99; }
+    .row.g-misc label { color:#8a8f99; }
+    details.grp { border:1px solid #2c2f35; margin:5px 0; background:#1a1c21; }
+    details.grp summary { cursor:pointer; padding:5px 8px; font-size:12px; color:#c8c8c8;
+                          background:#22252a; user-select:none; list-style-position:inside; }
+    details.grp summary:hover { background:#2a2d33; }
+    details.grp > .row, details.grp > div, details.grp > canvas { margin:6px 8px; }
+    details.g-spline summary { color:#e0a355; }
+    details.g-spline input[type=range] { accent-color:#e0a355; }
+    details.g-dasym summary { color:#b08fd0; }
+    details.g-dasym input[type=range] { accent-color:#b08fd0; }
+    details.g-aces summary { color:#d0b070; }
+    details.g-aces input[type=range] { accent-color:#d0b070; }
+    details.g-phys summary { color:#5f8fbf; }
+    details.g-phys input[type=range] { accent-color:#5f8fbf; }
+    details.g-asym summary { color:#5fd06a; }
+    details.g-asym input[type=range] { accent-color:#5fd06a; }
+    details.g-misc summary { color:#8a8f99; }
+    details.g-misc input[type=range] { accent-color:#8a8f99; }
+    input[type=range] { width:100%; }
+    .btns button { background:#22252a; color:#c8c8c8; border:1px solid #3a3d44; padding:4px 8px; margin:2px 2px 2px 0; cursor:pointer; font:12px monospace; }
+    .btns button.on { background:#2f5230; border-color:#5fd06a; color:#dff5e0; }
+    #graphPanel { position:fixed; top:12px; right:12px; z-index:10; }
+    #graphPanel .toggles { margin-top:6px; }
+    #graphPanel .toggles button { background:#22252a; color:#c8c8c8; border:1px solid #3a3d44;
+        padding:3px 7px; margin:2px 3px 2px 0; cursor:pointer; font:11px monospace; }
+    #graphPanel .toggles button.off { opacity:0.32; text-decoration: line-through; }
+    #graphPanel .legend2 { font-size:11px; margin-top:6px; color:#9a9da4; }
+    #graphPanel .legend2 span { margin-right:14px; white-space:nowrap; display:inline-block; }
+    .sw { display:inline-block; width:18px; height:3px; vertical-align:middle; margin-right:5px; }
+    #readout { color:#9fe0a8; }
+    .dim { color:#77797f; font-size:11px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui" class="panel">
+    <h1>Фонарь: физика + игровая кривая</h1>
+
+    <details class="grp" id="grpSrc" open>
+        <summary>источник света (L)</summary>
+        <div class="row btns">
+            <button id="srcFoc">фокус (конус)</button>
+            <button id="srcPt">точечный 4&pi;</button>
+        </div>
+    </details>
+
+    <details class="grp" id="grpCurve" open>
+        <summary>кривая освещённости (1&ndash;6 / C)</summary>
+        <div class="row btns">
+            <button id="cr0">1. без кривой (клэмп)</button>
+            <button id="cr1">2. игра: клип min(x,1)</button>
+            <button id="cr2">3. асимптота K+h&middot;o/(s+o)</button>
+            <button id="cr3">4. тонмап ACES</button>
+            <button id="cr4">5. сплайн по расстоянию</button>
+            <button id="cr5">6. асимптота по расстоянию M/(1+(d/a)^p)</button>
+        </div>
+    </details>
+
+    <details class="grp g-spline" id="grpSpline">
+        <summary>5. сплайн по расстоянию</summary>
+        <div class="row"><label>пик % @10 см: <span class="val" id="vPk"></span></label>
+            <input type="range" id="sPk" min="0.1" max="1.5" step="0.01" value="1.00"></div>
+        <div class="row"><label>% @20 см (X): <span class="val" id="vXx"></span></label>
+            <input type="range" id="sXx" min="0" max="1.5" step="0.01" value="0.75"></div>
+        <div class="row"><label>% @50 см (Y): <span class="val" id="vYy"></span></label>
+            <input type="range" id="sYy" min="0" max="1.5" step="0.01" value="0.50"></div>
+        <div class="row"><label>% @1 м (Z), дальше к 0 @12 м: <span class="val" id="vZz"></span></label>
+            <input type="range" id="sZz" min="0" max="1.5" step="0.01" value="0.30"></div>
+        <div id="spErr" style="color:#e05555; font-size:11px; min-height:15px"></div>
+    </details>
+
+    <details class="grp g-dasym" id="grpDasym">
+        <summary>6. асимптота по расстоянию</summary>
+        <div class="row"><label>макс. яркость M: <span class="val" id="vAm"></span></label>
+            <input type="range" id="sAm" min="0.1" max="5" step="0.01" value="2.00"></div>
+        <div class="row"><label>полуспад a, м: <span class="val" id="vAa"></span></label>
+            <input type="range" id="sAa" min="0.5" max="12" step="0.1" value="6.0"></div>
+        <div class="row"><label>степень хвоста p (2 = 1/d&sup2;): <span class="val" id="vAp"></span></label>
+            <input type="range" id="sAp" min="1" max="3" step="0.1" value="2.0"></div>
+    </details>
+
+    <details class="grp g-aces" id="grpAces">
+        <summary>4. тонмап ACES</summary>
+        <div class="row"><label>максимум после кривой: <span class="val" id="vAc"></span></label>
+            <input type="range" id="sAc" min="0.3" max="1" step="0.01" value="1.00"></div>
+    </details>
+
+    <details class="grp g-asym" id="grpAsym">
+        <summary>3. асимптота по значению</summary>
+        <div class="row"><label>h — запас над коленом: <span class="val" id="vH"></span></label>
+            <input type="range" id="sH" min="0.05" max="0.6" step="0.01" value="0.25"></div>
+        <div class="row"><label>s — крутизна асимптоты: <span class="val" id="vS"></span></label>
+            <input type="range" id="sS" min="0.05" max="1.5" step="0.01" value="0.25"></div>
+    </details>
+
+    <details class="grp g-phys" id="grpPhys" open>
+        <summary>физика источника</summary>
+        <div class="row"><label>световой поток F: <span class="val" id="vFlux"></span></label>
+            <input type="range" id="sFlux" min="0.1" max="5" step="0.05" value="0.70"></div>
+        <div class="row"><label>полуугол конуса: <span class="val" id="vCone"></span></label>
+            <input type="range" id="sCone" min="5" max="40" step="1" value="12"></div>
+        <div class="row"><label>r&#8320; — размер излучателя, м: <span class="val" id="vR0"></span></label>
+            <input type="range" id="sR0" min="0.005" max="0.15" step="0.005" value="0.03"></div>
+        <div class="row"><label>сдвиг кривой влево, м (0&ndash;10): <span class="val" id="vOff"></span></label>
+            <input type="range" id="sOff" min="0" max="10" step="0.1" value="0"></div>
+        <div class="row"><label>экспозиция tm: <span class="val" id="vTm"></span></label>
+            <input type="range" id="sTm" min="0.25" max="3" step="0.05" value="1.0"></div>
+    </details>
+
+    <details class="grp g-misc" id="grpMisc">
+        <summary>инерция фонаря</summary>
+        <div class="row"><label>скорость догоняния (0 — выкл): <span class="val" id="vIn"></span></label>
+            <input type="range" id="sIn" min="0" max="40" step="1" value="16"></div>
+    </details>
+</div>
+
+<div id="graphPanel" class="panel">
+    <canvas id="mini" width="620" height="400" style="display:block; background:#181a1e; border:1px solid #2c2f35"></canvas>
+    <div class="toggles" id="modeToggles"></div>
+    <div class="legend2">
+        <span><i class="sw" style="background:#5fd06a"></i>текущий режим</span>
+        <span>кнопки выше — включить/выключить кривые</span>
+    </div>
+</div>
+
+<div id="hud" class="panel">
+    <div id="fps"></div>
+    <div id="mode"></div>
+    <div id="readout">—</div>
+</div>
+
+<div id="hint" class="panel">
+    WASD — идти, Shift или X (зажать с W) — спринт, мышь — смотреть<br>
+    клик по карточке — захват мыши, Esc — отпустить (настройки доступны)<br>
+    L — источник, 1&ndash;5 — кривая
+</div>
+
+<div id="overlay"><div class="card">
+    <b>Симулятор фонаря</b><br><br>
+    Одна и та же мощность (световой поток F) в двух источниках:<br>
+    сфокусированный конус (поток спроецирован на малый телесный угол &Omega;) и точечный 4&pi;.<br>
+    Освещённость — честная: E = F&middot;gain/(d&sup2;+r&#8320;&sup2;), на излучателе не бесконечна.<br>
+    Поверх кривой освещённости накладывается игровой вариант: клип, асимптота или ACES.<br><br>
+    <b>Кликни, чтобы войти</b>
+</div></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from "three";
+
+// ---------- параметры ----------
+const K = 1.0;
+const state = {
+    source: 0,        // 0 фокус, 1 точечный
+    curve: 2,         // 0 клэмп, 1 клип, 2 асимптота, 3 ACES
+    flux: 0.70,
+    coneDeg: 12,
+    r0: 0.03,
+    tm: 1.0,
+    h: 0.25,
+    s: 0.25,
+    inertia: 16,       // скорость догоняния луча за взглядом, 0 — выкл
+    sp: { peak: 1.0, x: 0.75, y: 0.50, z: 0.30 },  // контрольные точки сплайна
+    asym: { M: 2.0, a: 6.0, p: 2.0 },              // асимптота по расстоянию
+    acesMax: 1.0,                                   // потолок после ACES
+    off: 0.0,                                       // сдвиг кривой 1/d^2 по оси расстояний
+};
+
+// ---------- ручной сплайн затухания (эмуляция HDR-адаптации глаза) ----------
+// контрольные точки: [дистанция_м, яркость]. Дистанции строго растут,
+// значения монотонно убывают — иначе конфиг бессмысленный, это проверяется.
+const SPLINE_TAIL_M = 12.0; // хвост: после 1 м линейно к нулю, "как оригинал"
+
+function assertMonotoneSpline(pts) {
+    for (let i = 1; i < pts.length; i++) {
+        if (!(pts[i][0] > pts[i - 1][0]))
+            throw new Error("дистанции должны строго расти (сегмент " + i + ")");
+        if (!(pts[i][1] <= pts[i - 1][1] + 1e-9))
+            throw new Error("яркость должна монотонно убывать: " +
+                pts[i - 1][1].toFixed(2) + " -> " + pts[i][1].toFixed(2) + " (сегмент " + i + ")");
+    }
+}
+
+function buildFalloffSpline(peak, x, y, z, tailM) {
+    const pts = [[0.10, peak], [0.20, x], [0.50, y], [1.00, z], [tailM, 0]];
+    assertMonotoneSpline(pts);
+    return pts;
+}
+
+function evalFalloffSpline(pts, d) {
+    if (d <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+        if (d < pts[i][0]) {
+            const t = (d - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+            return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t;
+        }
+    }
+    return pts[pts.length - 1][1];
+}
+
+state.splinePts = buildFalloffSpline(state.sp.peak, state.sp.x, state.sp.y, state.sp.z, SPLINE_TAIL_M);
+
+// асимптота по расстоянию: y(d) = M / (1 + (d/a)^p)
+// старт с M, полуспад на a, хвост ~ d^-p; при p=2 — честный 1/d^2
+function assertAsymParams(M, a, p) {
+    if (!(M >= 0)) throw new Error("M должна быть >= 0");
+    if (!(a > 0)) throw new Error("a (полуспад) должна быть > 0");
+    if (!(p > 0)) throw new Error("p (степень) должна быть > 0");
+}
+
+function evalAsymDist(M, a, p, d) {
+    return M / (1 + Math.pow(d / a, p));
+}
+
+// gain = 4pi/Omega, Omega = 2pi(1-cos(halfAngle))
+function coneGain(deg) {
+    const th = deg * Math.PI / 180;
+    return 2 / (1 - Math.cos(th));
+}
+
+// ---------- сцена ----------
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05060a);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
+camera.rotation.order = "YXZ";
+
+const uniforms = {
+    uLightPos:  { value: new THREE.Vector3() },
+    uLightDir:  { value: new THREE.Vector3(0, 0, -1) },
+    uCosOuter:  { value: 0 },
+    uCosInner:  { value: 0 },
+    uGain:      { value: 1 },
+    uFlux:      { value: state.flux },
+    uR0:        { value: state.r0 },
+    uTm:        { value: state.tm },
+    uCurve:     { value: state.curve },
+    uPoint:     { value: 0 },
+    uK:         { value: K },
+    uH:         { value: state.h },
+    uS:         { value: state.s },
+    uSpline:    { value: state.splinePts.map(p => new THREE.Vector2(p[0], p[1])) },
+    uAsymM:     { value: state.asym.M },
+    uAsymA:     { value: state.asym.a },
+    uAsymP:     { value: state.asym.p },
+    uAcesMax:   { value: state.acesMax },
+    uOff:       { value: state.off },
+};
+
+const VERT = /* glsl */`
+    varying vec3 vWPos;
+    varying vec3 vN;
+    void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWPos = wp.xyz;
+        vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+    }
+`;
+
+const FRAG = /* glsl */`
+    precision highp float;
+    varying vec3 vWPos;
+    varying vec3 vN;
+
+    uniform vec3  uLightPos;
+    uniform vec3  uLightDir;
+    uniform float uCosOuter, uCosInner;
+    uniform float uGain;      // 4pi/Omega для конуса, 1 для точки
+    uniform float uFlux;
+    uniform float uR0;        // размер излучателя: гасит бесконечность при d->0
+    uniform float uTm;
+    uniform int   uCurve;     // 0 клэмп, 1 клип, 2 асимптота, 3 ACES
+    uniform int   uPoint;
+    uniform float uK, uH, uS;
+    uniform vec2  uSpline[5];  // (дистанция_м, яркость) — монотонно убывающий кусочно-линейный сплайн
+    uniform float uAsymM, uAsymA, uAsymP; // асимптота по расстоянию M/(1+(d/a)^p)
+    uniform float uAcesMax;               // потолок после ACES
+    uniform float uOff;                   // сдвиг кривой 1/d^2: E ~ 1/((d-off)^2 + r0^2)
+
+    float splineEval(float d) {
+        if (d <= uSpline[0].x) return uSpline[0].y;
+        for (int i = 1; i < 5; i++) {
+            if (d < uSpline[i].x) {
+                float t = (d - uSpline[i-1].x) / (uSpline[i].x - uSpline[i-1].x);
+                return mix(uSpline[i-1].y, uSpline[i].y, t);
+            }
+        }
+        return uSpline[4].y;
+    }
+
+    uniform vec3  uAlbedo;
+    uniform float uShin, uSpec;
+    uniform float uChecker;
+
+    vec3 aces(vec3 x) {
+        return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);
+    }
+
+    void main() {
+        vec3 Ld = uLightPos - vWPos;
+        float d = max(length(Ld), 1e-4);
+        vec3 L = Ld / d;
+        vec3 N = normalize(vN);
+        float ndl = max(dot(N, L), 0.0);
+
+        // масштаб света по расстоянию: физика (поток/(телесный угол)/d^2, r0
+        // гасит бесконечность у излучателя) или ручные кривые (сплайн/асимптота);
+        // конус фонаря накладывается в любом режиме — это луч, а не лампа-шар
+        float Lmag;
+        if (uCurve == 4) {
+            Lmag = splineEval(d);
+        } else if (uCurve == 5) {
+            Lmag = uAsymM / (1.0 + pow(d / uAsymA, uAsymP));
+        } else {
+            float dd = d - uOff;
+            Lmag = uFlux * uGain / (dd*dd + uR0*uR0);
+        }
+        if (uPoint == 0) {
+            float cs = dot(-L, uLightDir);
+            Lmag *= smoothstep(uCosOuter, uCosInner, cs);
+        }
+
+        // игровой световой член: light*tm
+        float lightTerm = Lmag * ndl * uTm;
+
+        // кривая из combine_1.ps: применяется к свету, потом умножается albedo
+        float y = lightTerm;
+        if (uCurve == 1) y = min(lightTerm, uK);
+        if (uCurve == 2 && lightTerm > uK) {
+            float o = lightTerm - uK;
+            y = uK + uH * o / (uS + o);
+        }
+
+        vec3 col = uAlbedo * (y / uTm);
+        if (uChecker > 0.5) {
+            float c = mod(floor(vWPos.x) + floor(vWPos.z), 2.0);
+            col *= 0.82 + 0.30 * c;
+        }
+
+        // слабое "лунное" окружение, чтобы не быть слепым без фонаря
+        col += uAlbedo * 0.035;
+
+        // спекуляр добавляется после кривой, отдельным членом (как в шейдере игры)
+        vec3 V = normalize(cameraPosition - vWPos);
+        vec3 Hv = normalize(L + V);
+        float spec = pow(max(dot(N, Hv), 0.0), uShin) * uSpec * min(Lmag * ndl, 4.0);
+        col += vec3(spec * step(0.001, ndl));
+
+        if (uCurve == 0 || uCurve == 4 || uCurve == 5) col = clamp(col, vec3(0.0), vec3(1.0));
+        if (uCurve == 3) col = min(aces(col * uTm), vec3(uAcesMax));
+
+        gl_FragColor = vec4(col, 1.0);
+    }
+`;
+
+const mats = [];
+function makeMat(albedo, shin, spec, checker) {
+    const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: {} });
+    // общие юниформы — по ссылке, персональные — свои
+    for (const k in uniforms) m.uniforms[k] = uniforms[k];
+    m.uniforms.uAlbedo = { value: new THREE.Color(albedo) };
+    m.uniforms.uShin = { value: shin };
+    m.uniforms.uSpec = { value: spec };
+    m.uniforms.uChecker = { value: checker ? 1 : 0 };
+    mats.push(m);
+    return m;
+}
+
+// объекты
+const colliders = []; // {x, z, r} круговые; стена отдельно
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), makeMat(0x8a8a8a, 40, 0.15, true));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+const wall = new THREE.Mesh(new THREE.BoxGeometry(12, 3, 0.5), makeMat(0x9c8a70, 24, 0.25));
+wall.position.set(0, 1.5, -8);
+scene.add(wall);
+
+const cube = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), makeMat(0x708898, 32, 0.35));
+cube.position.set(3.2, 1, -2.5);
+cube.rotation.y = 0.4;
+scene.add(cube);
+colliders.push({ x: 3.2, z: -2.5, r: 1.7 });
+
+const ball = new THREE.Mesh(new THREE.SphereGeometry(1.2, 48, 32), makeMat(0xa0a0b0, 90, 0.9));
+ball.position.set(-3.5, 1.2, 1.5);
+scene.add(ball);
+colliders.push({ x: -3.5, z: 1.5, r: 1.5 });
+
+const crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), makeMat(0x8f7a55, 24, 0.2));
+crate.position.set(1.6, 0.6, 2.6);
+crate.rotation.y = -0.3;
+scene.add(crate);
+colliders.push({ x: 1.6, z: 2.6, r: 1.0 });
+
+const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3, 24), makeMat(0x9a9a9a, 48, 0.5));
+pillar.position.set(-1.6, 1.5, -4.2);
+scene.add(pillar);
+colliders.push({ x: -1.6, z: -4.2, r: 0.85 });
+
+// маркер положения фонаря (маленькая светящаяся точка, чисто для ориентира)
+const lampMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.03, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xfff2cc })
+);
+scene.add(lampMesh);
+
+// ---------- управление ----------
+let yaw = 0, pitch = 0;
+const player = { x: 0, z: 5 };
+const EYE = 1.7;
+const keys = {};
+addEventListener("keydown", e => {
+    keys[e.code] = true;
+    if (e.code === "KeyL") setSource(1 - state.source);
+    if (e.code === "KeyC") setCurve((state.curve + 1) % 6);
+    const n = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6"].indexOf(e.code);
+    if (n >= 0) setCurve(n);
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+const overlay = document.getElementById("overlay");
+const overlayCard = overlay.querySelector(".card");
+overlayCard.addEventListener("click", () => canvas.requestPointerLock());
+canvas.addEventListener("click", () => canvas.requestPointerLock());
+document.addEventListener("pointerlockchange", () => {
+    overlay.style.display = document.pointerLockElement === canvas ? "none" : "flex";
+});
+addEventListener("mousemove", e => {
+    if (document.pointerLockElement !== canvas) return;
+    yaw -= e.movementX * 0.0022;
+    pitch -= e.movementY * 0.0022;
+    pitch = Math.max(-1.5, Math.min(1.5, pitch));
+});
+
+function move(dt) {
+    // спринт: Shift, либо X зажатой вместе с W — как в сталкере
+    const run = keys["ShiftLeft"] || keys["ShiftRight"] || keys["KeyX"];
+    const sp = (run ? 6.5 : 3) * dt;
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    let dx = 0, dz = 0;
+    if (keys["KeyW"]) { dx += fx; dz += fz; }
+    if (keys["KeyS"]) { dx -= fx; dz -= fz; }
+    if (keys["KeyA"]) { dx += fz; dz -= fx; }
+    if (keys["KeyD"]) { dx -= fz; dz += fx; }
+    const len = Math.hypot(dx, dz);
+    if (len > 0) { player.x += dx / len * sp; player.z += dz / len * sp; }
+
+    // круглые коллайдеры
+    for (const c of colliders) {
+        const ex = player.x - c.x, ez = player.z - c.z;
+        const d = Math.hypot(ex, ez);
+        if (d < c.r && d > 1e-4) {
+            player.x = c.x + ex / d * c.r;
+            player.z = c.z + ez / d * c.r;
+        }
+    }
+    // стена (AABB): x in [-6.4, 6.4], z около -8
+    if (Math.abs(player.x) < 6.4 && player.z < -7.5 && player.z > -8.9)
+        player.z = -7.5;
+    // границы площадки
+    player.x = Math.max(-28, Math.min(28, player.x));
+    player.z = Math.max(-28, Math.min(28, player.z));
+}
+
+// ---------- UI ----------
+const curveNames = ["1. без кривой (жёсткий клэмп пикселя)", "2. игра сейчас: клип min(x,1)",
+                    "3. асимптота K+h·o/(s+o)", "4. тонмап ACES",
+                    "5. ручной сплайн по расстоянию (эмуляция HDR)",
+                    "6. асимптота по расстоянию M/(1+(d/a)^p)"];
+const srcNames = ["сфокусированный конус", "точечный источник 4π"];
+
+function setSource(v) {
+    state.source = v;
+    document.getElementById("srcFoc").classList.toggle("on", v === 0);
+    document.getElementById("srcPt").classList.toggle("on", v === 1);
+    syncUI();
+}
+function setCurve(v) {
+    state.curve = v;
+    for (let i = 0; i < 6; i++)
+        document.getElementById("cr" + i).classList.toggle("on", v === i);
+    // открыта ТОЛЬКО группа текущего режима, остальные группы кривых закрыты
+    const groups = ["grpAsym", "grpAces", "grpSpline", "grpDasym"];
+    const active = [null, null, "grpAsym", "grpAces", "grpSpline", "grpDasym"][v];
+    for (const g of groups)
+        document.getElementById(g).open = (g === active);
+    syncUI();
+}
+document.getElementById("srcFoc").onclick = () => setSource(0);
+document.getElementById("srcPt").onclick = () => setSource(1);
+for (let i = 0; i < 6; i++)
+    document.getElementById("cr" + i).onclick = () => setCurve(i);
+
+function bindSlider(id, key, fmt) {
+    const el = document.getElementById(id);
+    el.addEventListener("input", () => { state[key] = +el.value; syncUI(); });
+}
+bindSlider("sFlux", "flux"); bindSlider("sCone", "coneDeg"); bindSlider("sR0", "r0");
+bindSlider("sTm", "tm"); bindSlider("sH", "h"); bindSlider("sS", "s");
+document.getElementById("sOff").addEventListener("input", e => { state.off = -(+e.target.value); syncUI(); });
+bindSlider("sIn", "inertia");
+function bindSp(id, k) {
+    document.getElementById(id).addEventListener("input", e => { state.sp[k] = +e.target.value; syncUI(); });
+}
+bindSp("sPk", "peak"); bindSp("sXx", "x"); bindSp("sYy", "y"); bindSp("sZz", "z");
+function bindAsym(id, k) {
+    document.getElementById(id).addEventListener("input", e => { state.asym[k] = +e.target.value; syncUI(); });
+}
+bindAsym("sAm", "M"); bindAsym("sAa", "a"); bindAsym("sAp", "p");
+document.getElementById("sAc").addEventListener("input", e => { state.acesMax = +e.target.value; syncUI(); });
+
+function syncUI() {
+    uniforms.uFlux.value = state.flux;
+    uniforms.uR0.value = state.r0;
+    uniforms.uTm.value = state.tm;
+    uniforms.uCurve.value = state.curve;
+    uniforms.uH.value = state.h;
+    uniforms.uS.value = state.s;
+    uniforms.uPoint.value = state.source;
+
+    // сплайн: пересобираем с проверкой монотонности; при нарушении — assert,
+    // в шейдер уходит последний валидный конфиг, ошибка показывается в панели
+    const errEl = document.getElementById("spErr");
+    try {
+        state.splinePts = buildFalloffSpline(state.sp.peak, state.sp.x, state.sp.y, state.sp.z, SPLINE_TAIL_M);
+        state.splinePts.forEach((p, i) => uniforms.uSpline.value[i].set(p[0], p[1]));
+        errEl.textContent = "";
+    } catch (e) {
+        console.assert(false, "немонотонный сплайн отклонён: " + e.message);
+        errEl.textContent = "немонотонный сплайн отклонён: " + e.message;
+    }
+
+    // параметры асимптоты: допустимость проверяется assert'ом
+    try {
+        assertAsymParams(state.asym.M, state.asym.a, state.asym.p);
+        uniforms.uAsymM.value = state.asym.M;
+        uniforms.uAsymA.value = state.asym.a;
+        uniforms.uAsymP.value = state.asym.p;
+    } catch (e) {
+        console.assert(false, "параметры асимптоты отклонены: " + e.message);
+        errEl.textContent = "асимптота отклонена: " + e.message;
+    }
+
+    uniforms.uAcesMax.value = state.acesMax;
+
+    const half = state.coneDeg * Math.PI / 180;
+    uniforms.uCosOuter.value = Math.cos(half);
+    uniforms.uCosInner.value = Math.cos(half * 0.55);
+    uniforms.uGain.value = state.source === 0 ? coneGain(state.coneDeg) : 1;
+
+    document.getElementById("vFlux").textContent = state.flux.toFixed(2);
+    document.getElementById("vCone").textContent = state.coneDeg + "° (gain ×" + coneGain(state.coneDeg).toFixed(0) + ")";
+    document.getElementById("vR0").textContent = state.r0.toFixed(3);
+    document.getElementById("vTm").textContent = state.tm.toFixed(2);
+    document.getElementById("vOff").textContent = (-state.off).toFixed(1) +
+        (state.off < -0.001 ? "  (коллимация, полюс на " + (-state.off).toFixed(1) + " м позади)" : "");
+    uniforms.uOff.value = state.off;
+    document.getElementById("vH").textContent = state.h.toFixed(2);
+    document.getElementById("vS").textContent = state.s.toFixed(2);
+    document.getElementById("vIn").textContent = state.inertia === 0 ? "выкл" : state.inertia.toFixed(0);
+    document.getElementById("vPk").textContent = (state.sp.peak * 100).toFixed(0) + "%";
+    document.getElementById("vXx").textContent = (state.sp.x * 100).toFixed(0) + "%";
+    document.getElementById("vYy").textContent = (state.sp.y * 100).toFixed(0) + "%";
+    document.getElementById("vZz").textContent = (state.sp.z * 100).toFixed(0) + "%";
+    document.getElementById("vAm").textContent = (state.asym.M * 100).toFixed(0) + "%";
+    document.getElementById("vAa").textContent = state.asym.a.toFixed(2);
+    document.getElementById("vAp").textContent = state.asym.p.toFixed(1);
+    document.getElementById("vAc").textContent = state.acesMax.toFixed(2);
+    document.getElementById("mode").innerHTML =
+        "источник: <b>" + srcNames[state.source] + "</b><br>кривая: <b>" + curveNames[state.curve] + "</b>";
+}
+setSource(0);
+setCurve(2);
+
+// ---------- замер освещённости в прицеле ----------
+const raycaster = new THREE.Raycaster();
+const readout = document.getElementById("readout");
+let lastAimD = NaN;
+
+function curveJS(x) {
+    if (x <= K) return x;
+    if (state.curve === 2) { const o = x - K; return K + state.h * o / (state.s + o); }
+    return K; // клип
+}
+
+function measure() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const hits = raycaster.intersectObject(scene, true);
+    if (!hits.length || !hits[0].face) { readout.textContent = "прицел: пусто"; lastAimD = NaN; return; }
+    const hit = hits[0];
+    const d = hit.distance;
+    lastAimD = d;
+    const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+    const toL = uniforms.uLightPos.value.clone().sub(hit.point).normalize();
+    const ndl = Math.max(n.dot(toL), 0);
+    // фактор конуса в точке прицела (при инерции луч может отставать от взгляда)
+    let spot = 1;
+    if (state.source === 0) {
+        const cs = toL.clone().negate().dot(uniforms.uLightDir.value);
+        spot = THREE.MathUtils.smoothstep(cs, uniforms.uCosOuter.value, uniforms.uCosInner.value);
+    }
+    let lt;
+    if (state.curve === 4) {
+        lt = evalFalloffSpline(state.splinePts, d) * ndl * spot * state.tm;
+    } else if (state.curve === 5) {
+        lt = evalAsymDist(state.asym.M, state.asym.a, state.asym.p, d) * ndl * spot * state.tm;
+    } else {
+        const dd = d - state.off;
+        let E = state.flux * uniforms.uGain.value / (dd * dd + state.r0 * state.r0);
+        lt = E * ndl * spot * state.tm;
+    }
+    let y = lt;
+    if (state.curve === 1) y = Math.min(lt, K);
+    if (state.curve === 2) y = curveJS(lt);
+    readout.innerHTML =
+        "прицел: d = " + d.toFixed(2) + " м &nbsp; N·L = " + ndl.toFixed(2) + "<br>" +
+        "свет до кривой = " + (lt >= 100 ? lt.toFixed(0) : lt.toFixed(3)) +
+        " &nbsp;&rarr;&nbsp; после = " + y.toFixed(3) +
+        (lt > K ? "  (над коленом ×" + (lt / K).toFixed(1) + ")" : "");
+}
+
+// ---------- мини-график E(d) на оси луча ----------
+const mini = document.getElementById("mini");
+const miniCtx = mini.getContext("2d");
+const M_W = mini.width, M_H = mini.height;
+const M_PADL = 30, M_PADB = 16, M_PADT = 6, M_PADR = 6;
+const M_DMAX = 10, M_YB = 0.01, M_YT = 10;
+
+function axisLight(d) { // свет на оси луча, без N·L
+    const dd = d - state.off;
+    return state.flux * uniforms.uGain.value / (dd * dd + state.r0 * state.r0);
+}
+
+function curveAll(lt, m) { // как в шейдере, для любого режима кривой
+    if (lt <= K || m === 0 || m === 3) return lt;
+    if (m === 1) return Math.min(lt, K);
+    const o = lt - K;
+    return K + state.h * o / (state.s + o);
+}
+
+// ACES как в шейдере (Narkowicz), скалярно
+function acesJS(x) {
+    const t = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+    return Math.max(0, Math.min(t, 1));
+}
+
+// свет после кривой режима m (на оси луча, N·L = 1)
+function postCurveOnAxis(d, m) {
+    const lt = axisLight(d) * state.tm;
+    switch (m) {
+        case 0: return lt;
+        case 1: return Math.min(lt, K);
+        case 2: return curveAll(lt, m);
+        case 3: return Math.min(acesJS(lt), state.acesMax);
+        case 4: return evalFalloffSpline(state.splinePts, d) * state.tm;
+        case 5: return evalAsymDist(state.asym.M, state.asym.a, state.asym.p, d) * state.tm;
+    }
+    return lt;
+}
+
+// постоянные цвета кривых по режимам; текущий всегда зелёный
+const MODE_COLORS = ["#8a8f99", "#e05555", "#7fd0d0", "#d0b070", "#e0a355", "#b08fd0"];
+
+// тумблеры кривых на графике
+const MODE_SHORT = ["1 без кривой", "2 клип", "3 асимптота знач.", "4 ACES", "5 сплайн", "6 асимптота расст."];
+const showModes = [true, true, true, true, true, true];
+{
+    const box = document.getElementById("modeToggles");
+    for (let m = 0; m < 6; m++) {
+        const b = document.createElement("button");
+        b.textContent = MODE_SHORT[m];
+        b.style.borderColor = MODE_COLORS[m];
+        b.style.color = MODE_COLORS[m];
+        b.onclick = () => {
+            showModes[m] = !showModes[m];
+            b.classList.toggle("off", !showModes[m]);
+        };
+        box.appendChild(b);
+    }
+}
+
+function drawMini() {
+    const g = miniCtx;
+    g.clearRect(0, 0, M_W, M_H);
+    const pw = M_W - M_PADL - M_PADR, ph = M_H - M_PADT - M_PADB;
+    const lgB = Math.log10(M_YB), lgT = Math.log10(M_YT);
+    const sx = d => M_PADL + (d / M_DMAX) * pw;
+    const sy = y => M_PADT + ph * (1 - (Math.log10(y) - lgB) / (lgT - lgB));
+
+    // сетка по декадам
+    g.font = "9px monospace";
+    for (let lg = lgB; lg <= lgT + 1e-9; lg++) {
+        g.strokeStyle = "#2b2e33";
+        g.beginPath(); g.moveTo(M_PADL, sy(Math.pow(10, lg))); g.lineTo(M_W - M_PADR, sy(Math.pow(10, lg))); g.stroke();
+        g.fillStyle = "#7a7d84"; g.textAlign = "right";
+        g.fillText(Math.pow(10, lg) >= 1 ? Math.pow(10, lg).toFixed(0) : Math.pow(10, lg).toFixed(2), M_PADL - 3, sy(Math.pow(10, lg)) + 3);
+    }
+    for (let m = 0; m <= M_DMAX; m += 5) {
+        g.strokeStyle = "#2b2e33";
+        g.beginPath(); g.moveTo(sx(m), M_PADT); g.lineTo(sx(m), M_H - M_PADB); g.stroke();
+        g.fillStyle = "#7a7d84"; g.textAlign = "center";
+        g.fillText(String(m), sx(m), M_H - 4);
+    }
+
+    // опорные линии: уровень 1 — общий ориентир; M/потолок — для режимов, где есть
+    const lvl = (y, c) => {
+        if (y < M_YB || y > M_YT) return;
+        g.strokeStyle = c; g.setLineDash([2, 3]);
+        g.beginPath(); g.moveTo(M_PADL, sy(y)); g.lineTo(M_W - M_PADR, sy(y)); g.stroke();
+        g.setLineDash([]);
+    };
+    lvl(K, "#6f5f3f");
+    if (state.curve === 2) lvl(K + state.h, "#3f6f8f");
+    if (state.curve === 3) lvl(state.acesMax, "#d0b070");
+
+    // кривые: физика и после кривой
+    const curve = (f, color, width, dash) => {
+        g.strokeStyle = color; g.lineWidth = width || 1.5; g.setLineDash(dash || []);
+        g.beginPath();
+        let started = false;
+        for (let px = 0; px <= pw; px++) {
+            const d = (px / pw) * M_DMAX;
+            const y = f(d);
+            if (!isFinite(y) || y < M_YB || y > M_YT) { started = false; continue; }
+            const X = M_PADL + px;
+            started ? g.lineTo(X, sy(y)) : (g.moveTo(X, sy(y)), started = true);
+        }
+        g.stroke(); g.setLineDash([]);
+    };
+    // кривые по тумблерам; текущий режим — зелёным и потолще
+    for (let m = 0; m < 6; m++) {
+        if (!showModes[m]) continue;
+        const cur = (m === state.curve);
+        curve(d => postCurveOnAxis(d, m), cur ? "#5fd06a" : MODE_COLORS[m], cur ? 3 : 2);
+        // номер режима на самой кривой, разнесённый по дистанции, чтобы не слипались
+        const dl = 0.2 + m * 0.35;
+        const yl = postCurveOnAxis(dl, m);
+        if (isFinite(yl) && yl > M_YB * 1.2 && yl < M_YT * 0.85) {
+            g.fillStyle = cur ? "#5fd06a" : MODE_COLORS[m];
+            g.font = "bold 11px monospace";
+            g.textAlign = "left";
+            g.fillText(String(m + 1), sx(dl) + 3, sy(yl) - 5);
+        }
+    }
+
+    // точка прицела — на кривой текущего режима
+    if (isFinite(lastAimD) && lastAimD <= M_DMAX) {
+        const y = postCurveOnAxis(lastAimD, state.curve);
+        g.strokeStyle = "#e8e8a0"; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(sx(lastAimD), M_PADT); g.lineTo(sx(lastAimD), M_H - M_PADB); g.stroke();
+        if (isFinite(y) && y >= M_YB && y <= M_YT) {
+            g.fillStyle = "#e8e8a0";
+            g.fillText("+", sx(lastAimD) + 3, sy(y) + 3);
+        }
+    }
+}
+
+// ---------- цикл ----------
+const clock = new THREE.Clock();
+const torchDir = new THREE.Vector3(0, 0, -1); // с инерцией, как в игре
+const fpsEl = document.getElementById("fps");
+let fpsFrames = 0, fpsTime = 0, fpsMs = 0;
+
+function tick() {
+    requestAnimationFrame(tick);
+    const t0 = performance.now();
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    move(dt);
+    camera.position.set(player.x, EYE, player.z);
+    camera.rotation.set(pitch, yaw, 0);
+
+    // фонарь чуть правее и ниже глаз, смотрит вперёд с лёгкой инерцией
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const fwd = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+    const lp = camera.position.clone().addScaledVector(right, 0.25).addScaledVector(fwd, 0.1);
+    lp.y -= 0.18;
+    uniforms.uLightPos.value.copy(lp);
+    lampMesh.position.copy(lp);
+
+    if (state.inertia > 0)
+        torchDir.lerp(fwd, Math.min(1, dt * state.inertia)).normalize();
+    else
+        torchDir.copy(fwd);
+    uniforms.uLightDir.value.copy(torchDir);
+
+    renderer.render(scene, camera);
+    measure();
+
+    fpsFrames++; fpsTime += dt; fpsMs = fpsMs * 0.9 + (performance.now() - t0) * 0.1;
+    drawMini();
+    if (fpsTime >= 0.5) {
+        fpsEl.innerHTML = "FPS: " + Math.round(fpsFrames / fpsTime) +
+            " &nbsp;<span class='dim'>(" + fpsMs.toFixed(1) + " мс/кадр)</span>";
+        fpsFrames = 0; fpsTime = 0;
+    }
+}
+tick();
+
+addEventListener("resize", () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
